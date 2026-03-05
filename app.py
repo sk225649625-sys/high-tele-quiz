@@ -5,6 +5,8 @@ import asyncio
 import os
 import requests
 import json
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from bs4 import BeautifulSoup
 from telegram import Update, Poll, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import (
@@ -23,14 +25,12 @@ DB_NAME = "quiz_group_data.db"
 # 👇 Yahan Apne Links Daalein 👇
 WEBSITE_LINK = "https://todayvacancy.in" 
 TG_GROUP_LINK = "https://t.me/current_affairs_live_quiz"
-# HTML Parse Mode ke hisaab se Promo Text update kiya gaya hai
 PROMO_TEXT = f"🌐 <b>check todayvacancy:</b> <a href='{WEBSITE_LINK}'>Click Here</a>\n📢 <b>Join Telegram:</b> <a href='{TG_GROUP_LINK}'>Click Here</a>"
 
 # URLs
 GKTODAY_HI = "https://www.gktoday.in/quizbase/hindi-current-affairs"
 GKTODAY_EN = "https://www.gktoday.in/gk-current-affairs-quiz-questions-answers/"
 
-# 👇 ExamVeda URL Mapping 👇
 EXAMVEDA_URLS = {
     "src_ev_aptitude": "https://www.examveda.com/mcq-question-on-arithmetic-ability/",
     "src_ev_reasoning": "https://www.examveda.com/mcq-question-on-competitive-reasoning/",
@@ -85,33 +85,26 @@ EXAMVEDA_URLS = {
     "src_ev_bank_int": "https://www.examveda.com/interview/banking-interview-questions-and-answers/",
 }
 
-# 👇 IndiaBix URL Mapping 👇
 INDIABIX_URLS = {
-    # Aptitude
     "src_ib_arithmetic": "https://www.indiabix.com/aptitude/questions-and-answers/",
     "src_ib_di": "https://www.indiabix.com/data-interpretation/questions-and-answers/",
-    # Reasoning
     "src_ib_verbal_ab": "https://www.indiabix.com/verbal-ability/questions-and-answers/",
     "src_ib_logical": "https://www.indiabix.com/logical-reasoning/questions-and-answers/",
     "src_ib_verbal_re": "https://www.indiabix.com/verbal-reasoning/questions-and-answers/",
     "src_ib_non_verbal": "https://www.indiabix.com/non-verbal-reasoning/questions-and-answers/",
-    # GK
     "src_ib_ca": "https://www.indiabix.com/current-affairs/questions-and-answers/",
     "src_ib_gk": "https://www.indiabix.com/general-knowledge/questions-and-answers/",
     "src_ib_science": "https://www.indiabix.com/general-knowledge/general-science/",
-    # Interview
     "src_ib_hr": "https://www.indiabix.com/hr-interview/questions-and-answers/",
     "src_ib_gd": "https://www.indiabix.com/group-discussion/topics-with-answers/",
     "src_ib_place": "https://www.indiabix.com/placement-papers/companies/",
     "src_ib_tech_int": "https://www.indiabix.com/technical/interview-questions-and-answers/",
-    # Engineering
     "src_ib_mech": "https://www.indiabix.com/mechanical-engineering/questions-and-answers/",
     "src_ib_civil": "https://www.indiabix.com/civil-engineering/questions-and-answers/",
     "src_ib_ece": "https://www.indiabix.com/electronics-and-communication-engineering/questions-and-answers/",
     "src_ib_eee": "https://www.indiabix.com/electrical-engineering/questions-and-answers/",
     "src_ib_cse": "https://www.indiabix.com/computer-science/questions-and-answers/",
     "src_ib_chem": "https://www.indiabix.com/chemical-engineering/questions-and-answers/",
-    # Programming
     "src_ib_c": "https://www.indiabix.com/c-programming/questions-and-answers/",
     "src_ib_cpp": "https://www.indiabix.com/cpp-programming/questions-and-answers/",
     "src_ib_csharp": "https://www.indiabix.com/c-sharp-programming/questions-and-answers/",
@@ -120,7 +113,6 @@ INDIABIX_URLS = {
     "src_ib_net": "https://www.indiabix.com/networking/questions-and-answers/",
 }
 
-# --- NETWORK SESSION ---
 SESSION = requests.Session()
 adapter = requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=20)
 SESSION.mount('http://', adapter)
@@ -130,6 +122,25 @@ HEADERS = {
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
     'Referer': 'https://www.google.com/'
 }
+
+# --- DUMMY WEB SERVER FOR RENDER ---
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b"Bot is alive and running!")
+
+    def log_message(self, format, *args):
+        # Disable logging to keep console clean
+        pass
+
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 10000))
+    server_address = ('0.0.0.0', port)
+    httpd = HTTPServer(server_address, DummyHandler)
+    print(f"Starting dummy web server on port {port} to satisfy Render health checks...")
+    httpd.serve_forever()
 
 # --- DATABASE SETUP ---
 def init_db():
@@ -305,17 +316,14 @@ def scrape_examveda(base_url, page):
 # ==========================================
 def extract_indiabix(soup):
     questions = []
-    # IndiaBix me har sawal is class ke andar hota hai
     containers = soup.find_all('div', class_='bix-div-container')
     
     for container in containers:
         try:
-            # 1. Question Text nikalna
             q_td = container.find('div', class_='bix-td-qtxt')
             if not q_td: continue
             q_text = q_td.get_text(strip=True)
             
-            # 2. Options nikalna
             options = []
             opts_container = container.find('div', class_='bix-tbl-options')
             if not opts_container: continue
@@ -326,22 +334,20 @@ def extract_indiabix(soup):
                 if val_div:
                     opt_text = val_div.get_text(strip=True)
                     if opt_text:
-                        options.append(opt_text[:100]) # Telegram limit
+                        options.append(opt_text[:100])
             
             if len(options) < 2: continue
             
-            # 3. Correct Answer nikalna (Hidden input se)
             ans_hidden = container.find('input', class_='jq-hdnakq')
             if not ans_hidden: continue
             ans_letter = ans_hidden.get('value', '').strip().upper()
             
-            # Option letter ko index me badalna (A=0, B=1, C=2, D=3)
             ans_map = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4}
             if ans_letter in ans_map:
                 correct_val = ans_map[ans_letter]
                 if 0 <= correct_val < len(options):
                     questions.append({
-                        'q': q_text[:300], # Telegram limit
+                        'q': q_text[:300],
                         'options': options,
                         'correct': correct_val
                     })
@@ -351,24 +357,21 @@ def extract_indiabix(soup):
 
 def scrape_indiabix(base_url, page):
     url = base_url
-    # Agar next page (page > 1) chahiye, toh website se uska link dhoondho
     if page > 1:
         try:
             res1 = SESSION.get(base_url, headers=HEADERS, timeout=10)
             soup1 = BeautifulSoup(res1.content, 'lxml')
-            # Niche diye gaye page numbers (2, 3, 4..) me se click wala link nikalna
             page_link = soup1.find('a', string=str(page))
             if page_link and 'href' in page_link.attrs:
                 url = page_link['href']
                 if not url.startswith('http'):
                     url = "https://www.indiabix.com" + url
             else:
-                return base_url, [] # Page nahi mila (Questions khatam)
+                return base_url, []
         except Exception as e:
             print(f"IndiaBix Pagination Error: {e}")
             return base_url, []
 
-    # Question Page ko Scrape karna
     try:
         res = SESSION.get(url, headers=HEADERS, timeout=10)
         soup = BeautifulSoup(res.content, 'lxml')
@@ -407,7 +410,6 @@ def get_examveda_main_menu():
         [InlineKeyboardButton("🔙 Back to Main", callback_data="menu_main")]
     ])
 
-# 👇 IndiaBix UI Setup 👇
 def get_indiabix_main_menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📐 General Aptitude", callback_data="ib_cat_aptitude")],
@@ -463,7 +465,6 @@ def get_ib_programming_menu():
         [InlineKeyboardButton("🔙 Back to IndiaBix", callback_data="menu_indiabix")]
     ])
 
-# ... ExamVeda Sub Menus ...
 def get_ev_cat1_menu(): 
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("Aptitude", callback_data="src_ev_aptitude"), InlineKeyboardButton("Reasoning", callback_data="src_ev_reasoning")],
@@ -528,7 +529,6 @@ def get_ev_cat7_menu():
         [InlineKeyboardButton("🔙 Back to ExamVeda", callback_data="menu_examveda")]
     ])
 
-
 # --- MAIN CONTROLLER ---
 CACHED_DATA = {} 
 EXAMVEDA_TEMP_CHAPTERS = {} 
@@ -542,7 +542,6 @@ async def fetch_and_start(update, context, source, page, chat_id):
         url, qs = scrape_gktoday(source, pg)
         src_name = "GKToday"
     elif "indiabix" in source:
-        # IndiaBix ka scraper ab call hoga
         url, qs = scrape_indiabix(source, pg)
         src_name = f"IndiaBix - Set {pg}"
     else:
@@ -550,7 +549,6 @@ async def fetch_and_start(update, context, source, page, chat_id):
         src_name = f"ExamVeda - Set {pg}"
 
     if not qs:
-        # HTML Parse Mode removed for error message to avoid URL breaking
         await context.bot.send_message(chat_id, f"❌ Error: Data nahi mila या इस पेज पर और सवाल नहीं हैं।\nLink: {url}")
         return
 
@@ -559,7 +557,6 @@ async def fetch_and_start(update, context, source, page, chat_id):
     job_name = f"quiz_{chat_id}"
     for job in context.job_queue.get_jobs_by_name(job_name): job.schedule_removal()
     
-    # "Quiz Started" message updated to remove promo text
     start_msg = (
         f"🚀 <b>Quiz Started!</b>\n"
         f"📚 Source: {src_name}\n"
@@ -595,16 +592,12 @@ async def button_tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     chat_id = update.effective_chat.id
     
-    # 👇 SAARA EDIT_MESSAGE_TEXT BADAL KAR SEND_MESSAGE KIYA GAYA HAI 👇
-    
     if data == "menu_main":
         await context.bot.send_message(chat_id=chat_id, text="📣 <b>Choose Quiz Category:</b>", reply_markup=get_main_menu(), parse_mode="HTML")
     elif data == "menu_gktoday":
         await context.bot.send_message(chat_id=chat_id, text="🌐 <b>Select GKToday Language:</b>", reply_markup=get_gktoday_menu(), parse_mode="HTML")
     elif data == "menu_examveda":
         await context.bot.send_message(chat_id=chat_id, text="🧠 <b>ExamVeda Main Categories:</b>\n<i>Choose an option below:</i>", reply_markup=get_examveda_main_menu(), parse_mode="HTML")
-    
-    # 👇 IndiaBix UI Handling 👇
     elif data == "menu_indiabix":
         await context.bot.send_message(chat_id=chat_id, text="🎓 <b>IndiaBix Categories:</b>\n<i>Choose an option below:</i>", reply_markup=get_indiabix_main_menu(), parse_mode="HTML")
     elif data == "ib_cat_aptitude":
@@ -620,8 +613,6 @@ async def button_tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "ib_cat_programming":
         await context.bot.send_message(chat_id=chat_id, text="💻 <b>Programming:</b>", reply_markup=get_ib_programming_menu(), parse_mode="HTML")
 
-
-    # 👇 ExamVeda Categories
     elif data == "ev_cat_1":
         await context.bot.send_message(chat_id=chat_id, text="🏆 <b>Competitive Exam MCQ (Option 1):</b>", reply_markup=get_ev_cat1_menu(), parse_mode="HTML")
     elif data == "ev_cat_2":
@@ -637,7 +628,6 @@ async def button_tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "ev_cat_7":
         await context.bot.send_message(chat_id=chat_id, text="🏦 <b>Banking Awareness (Option 7):</b>", reply_markup=get_ev_cat7_menu(), parse_mode="HTML")
 
-    # === GKTODAY LOGIC ===
     elif data.startswith("src_gktoday_"):
         source = data.replace("src_", "") 
         page = 1 
@@ -645,7 +635,6 @@ async def button_tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=chat_id, text=f"✅ Selected: {source.replace('gktoday_', '').upper()}\n🔄 Loading Questions...", parse_mode="HTML")
         await fetch_and_start(update, context, source, page, chat_id)
         
-    # === INDIABIX CHAPTER FETCHING ===
     elif data.startswith("src_ib_"):
         topic_name = data.replace("src_ib_", "").replace("_", " ").upper()
         base_url = INDIABIX_URLS.get(data)
@@ -665,7 +654,6 @@ async def button_tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
             row = []
             INDIABIX_TEMP_CHAPTERS[chat_id] = []
             
-            # IndiaBix Chapters are inside <ul class="need-ul-filter"> or <div class="topics-wrapper">
             ul_filter = soup.find('ul', class_='need-ul-filter')
             if not ul_filter:
                 ul_filter = soup.find('div', class_='topics-wrapper')
@@ -726,8 +714,6 @@ async def button_tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await context.bot.send_message(chat_id=chat_id, text="❌ Session Expired. Please select category again.", parse_mode="HTML")
 
-
-    # === EXAMVEDA CHAPTER FETCHING ===
     elif data.startswith("src_ev_"):
         topic_name = data.replace("src_ev_", "").replace("_", " ").upper()
         base_url = EXAMVEDA_URLS.get(data)
@@ -802,7 +788,6 @@ async def button_tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await context.bot.send_message(chat_id=chat_id, text="❌ Session Expired. Please select category again.", parse_mode="HTML")
 
-
 async def more_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_admin(update, context): return
     chat_id = update.effective_chat.id
@@ -835,11 +820,9 @@ async def send_quiz(context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        # Prevent HTML breaking from Math signs like < or >
         correct_ans_text = q['options'][q['correct']].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         promo_explanation = f"Correct Answer: {correct_ans_text}\n\n{PROMO_TEXT}"
         
-        # Inline buttons removed completely from poll
         msg = await context.bot.send_poll(
             chat_id=chat_id, 
             question=f"Q{curr_idx+1}: {q['q']}", 
@@ -904,8 +887,11 @@ async def setup_commands(application: Application):
     ])
 
 def main():
+    # Start the dummy web server in a background thread
+    threading.Thread(target=run_dummy_server, daemon=True).start()
+
     init_db()
-    print("Bot Live! ExamVeda AND IndiaBix Menus Fully Implemented.")
+    print("Bot Live! With Dummy Web Server for Render.")
     req = HTTPXRequest(connection_pool_size=20, connect_timeout=30, read_timeout=30)
     app = Application.builder().token(TOKEN).request(req).post_init(setup_commands).build()
     

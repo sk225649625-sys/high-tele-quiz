@@ -18,6 +18,14 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 
+# --- LOGGING SETUP ---
+# Taki Render logs me error dikh sake
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
 # --- CONFIGURATION ---
 TOKEN = "8685169118:AAHzlsEU2IvWtJ44sFpf3r2JAtzpWPv40a8"
 DB_NAME = "quiz_group_data.db"
@@ -25,12 +33,14 @@ DB_NAME = "quiz_group_data.db"
 # 👇 Yahan Apne Links Daalein 👇
 WEBSITE_LINK = "https://todayvacancy.in" 
 TG_GROUP_LINK = "https://t.me/current_affairs_live_quiz"
+# HTML Parse Mode ke hisaab se Promo Text update kiya gaya hai
 PROMO_TEXT = f"🌐 <b>check todayvacancy:</b> <a href='{WEBSITE_LINK}'>Click Here</a>\n📢 <b>Join Telegram:</b> <a href='{TG_GROUP_LINK}'>Click Here</a>"
 
 # URLs
 GKTODAY_HI = "https://www.gktoday.in/quizbase/hindi-current-affairs"
 GKTODAY_EN = "https://www.gktoday.in/gk-current-affairs-quiz-questions-answers/"
 
+# 👇 ExamVeda URL Mapping 👇
 EXAMVEDA_URLS = {
     "src_ev_aptitude": "https://www.examveda.com/mcq-question-on-arithmetic-ability/",
     "src_ev_reasoning": "https://www.examveda.com/mcq-question-on-competitive-reasoning/",
@@ -85,26 +95,33 @@ EXAMVEDA_URLS = {
     "src_ev_bank_int": "https://www.examveda.com/interview/banking-interview-questions-and-answers/",
 }
 
+# 👇 IndiaBix URL Mapping 👇
 INDIABIX_URLS = {
+    # Aptitude
     "src_ib_arithmetic": "https://www.indiabix.com/aptitude/questions-and-answers/",
     "src_ib_di": "https://www.indiabix.com/data-interpretation/questions-and-answers/",
+    # Reasoning
     "src_ib_verbal_ab": "https://www.indiabix.com/verbal-ability/questions-and-answers/",
     "src_ib_logical": "https://www.indiabix.com/logical-reasoning/questions-and-answers/",
     "src_ib_verbal_re": "https://www.indiabix.com/verbal-reasoning/questions-and-answers/",
     "src_ib_non_verbal": "https://www.indiabix.com/non-verbal-reasoning/questions-and-answers/",
+    # GK
     "src_ib_ca": "https://www.indiabix.com/current-affairs/questions-and-answers/",
     "src_ib_gk": "https://www.indiabix.com/general-knowledge/questions-and-answers/",
     "src_ib_science": "https://www.indiabix.com/general-knowledge/general-science/",
+    # Interview
     "src_ib_hr": "https://www.indiabix.com/hr-interview/questions-and-answers/",
     "src_ib_gd": "https://www.indiabix.com/group-discussion/topics-with-answers/",
     "src_ib_place": "https://www.indiabix.com/placement-papers/companies/",
     "src_ib_tech_int": "https://www.indiabix.com/technical/interview-questions-and-answers/",
+    # Engineering
     "src_ib_mech": "https://www.indiabix.com/mechanical-engineering/questions-and-answers/",
     "src_ib_civil": "https://www.indiabix.com/civil-engineering/questions-and-answers/",
     "src_ib_ece": "https://www.indiabix.com/electronics-and-communication-engineering/questions-and-answers/",
     "src_ib_eee": "https://www.indiabix.com/electrical-engineering/questions-and-answers/",
     "src_ib_cse": "https://www.indiabix.com/computer-science/questions-and-answers/",
     "src_ib_chem": "https://www.indiabix.com/chemical-engineering/questions-and-answers/",
+    # Programming
     "src_ib_c": "https://www.indiabix.com/c-programming/questions-and-answers/",
     "src_ib_cpp": "https://www.indiabix.com/cpp-programming/questions-and-answers/",
     "src_ib_csharp": "https://www.indiabix.com/c-sharp-programming/questions-and-answers/",
@@ -113,6 +130,7 @@ INDIABIX_URLS = {
     "src_ib_net": "https://www.indiabix.com/networking/questions-and-answers/",
 }
 
+# --- NETWORK SESSION ---
 SESSION = requests.Session()
 adapter = requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=20)
 SESSION.mount('http://', adapter)
@@ -129,17 +147,16 @@ class DummyHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-type', 'text/plain')
         self.end_headers()
-        self.wfile.write(b"Bot is alive and running!")
+        self.wfile.write(b"Bot is alive and running on Render!")
 
     def log_message(self, format, *args):
-        # Disable logging to keep console clean
-        pass
+        pass # Console clean rakhne ke liye log disable kiya hai
 
 def run_dummy_server():
     port = int(os.environ.get("PORT", 10000))
     server_address = ('0.0.0.0', port)
     httpd = HTTPServer(server_address, DummyHandler)
-    print(f"Starting dummy web server on port {port} to satisfy Render health checks...")
+    logger.info(f"Starting dummy web server on port {port} to satisfy Render health checks...")
     httpd.serve_forever()
 
 # --- DATABASE SETUP ---
@@ -206,7 +223,7 @@ async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
             await update.message.reply_text("⚠️ <b>Sirf Group Admins hi is command ko use kar sakte hain.</b>", parse_mode="HTML")
             return False
     except Exception as e:
-        print(f"Admin Check Error: {e}")
+        logger.error(f"Admin Check Error: {e}")
         return False
 
 # ==========================================
@@ -255,7 +272,7 @@ def scrape_gktoday(source, page):
             return inner_url, extract_gktoday(BeautifulSoup(res_in.content, 'lxml'))
         return None, []
     except Exception as e:
-        print(f"GT Error: {e}")
+        logger.error(f"GT Error: {e}")
         return None, []
 
 # ==========================================
@@ -308,7 +325,7 @@ def scrape_examveda(base_url, page):
         qs = extract_examveda(soup)
         return url, qs
     except Exception as e:
-        print(f"ExamVeda Scrape Error: {e}")
+        logger.error(f"ExamVeda Scrape Error: {e}")
         return url, []
 
 # ==========================================
@@ -369,7 +386,7 @@ def scrape_indiabix(base_url, page):
             else:
                 return base_url, []
         except Exception as e:
-            print(f"IndiaBix Pagination Error: {e}")
+            logger.error(f"IndiaBix Pagination Error: {e}")
             return base_url, []
 
     try:
@@ -378,7 +395,7 @@ def scrape_indiabix(base_url, page):
         qs = extract_indiabix(soup)
         return url, qs
     except Exception as e:
-        print(f"IndiaBix Scrape Error: {e}")
+        logger.error(f"IndiaBix Scrape Error: {e}")
         return url, []
 
 # ==========================================
@@ -566,7 +583,13 @@ async def fetch_and_start(update, context, source, page, chat_id):
     )
     
     await context.bot.send_message(chat_id, start_msg, parse_mode="HTML", disable_web_page_preview=True)
-    context.job_queue.run_repeating(send_quiz, interval=25, first=5, chat_id=chat_id, name=job_name)
+    
+    try:
+        # Schedule the quiz loop
+        context.job_queue.run_repeating(send_quiz, interval=25, first=5, chat_id=chat_id, name=job_name)
+    except Exception as e:
+        logger.error(f"Job Queue Error: {e}. PLEASE CHECK requirements.txt for job-queue package.")
+        await context.bot.send_message(chat_id, "⚠️ Error: Quiz start nahi hua. Piche dekhein (logs).")
 
 # --- BOT HANDLERS ---
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -694,7 +717,7 @@ async def button_tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await fetch_and_start(update, context, base_url, page, chat_id)
 
         except Exception as e:
-            print(f"Chapter Fetch Error: {e}")
+            logger.error(f"Chapter Fetch Error: {e}")
             await context.bot.send_message(chat_id=chat_id, text="❌ लोड करने में समस्या आई।", parse_mode="HTML")
 
     elif data.startswith("ib_chap_"):
@@ -768,7 +791,7 @@ async def button_tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await fetch_and_start(update, context, base_url, page, chat_id)
 
         except Exception as e:
-            print(f"Chapter Fetch Error: {e}")
+            logger.error(f"Chapter Fetch Error: {e}")
             await context.bot.send_message(chat_id=chat_id, text="❌ लोड करने में समस्या आई।", parse_mode="HTML")
 
     elif data.startswith("ev_chap_"):
@@ -838,7 +861,7 @@ async def send_quiz(context: ContextTypes.DEFAULT_TYPE):
         context.bot_data[msg.poll.id] = q['correct']
         update_index(chat_id, curr_idx + 1)
     except Exception as e:
-        print(f"Error sending poll: {e}")
+        logger.error(f"Error sending poll: {e}")
         update_index(chat_id, curr_idx + 1)
 
 async def poll_ans(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -891,7 +914,7 @@ def main():
     threading.Thread(target=run_dummy_server, daemon=True).start()
 
     init_db()
-    print("Bot Live! With Dummy Web Server for Render.")
+    logger.info("Bot Live! With Dummy Web Server for Render.")
     req = HTTPXRequest(connection_pool_size=20, connect_timeout=30, read_timeout=30)
     app = Application.builder().token(TOKEN).request(req).post_init(setup_commands).build()
     

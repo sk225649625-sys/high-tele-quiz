@@ -222,146 +222,49 @@ async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
         return False
 
 # ==========================================
-# 1. GKTODAY SCRAPER (UPDATED & ADVANCED)
+# 1. GKTODAY SCRAPER (REVERTED TO YOUR LOCAL WORKING CODE)
 # ==========================================
 def extract_gktoday(soup):
     questions = []
-    
-    # METHOD 1: New GKToday Layout (<div class="sques_quiz">)
-    sques = soup.find_all('div', class_='sques_quiz')
-    if not sques: # Try alternative container class
-        sques = soup.find_all('div', class_='wp_quiz_question')
-        
-    for sq in sques:
+    q_divs = soup.find_all('div', class_='wp_quiz_question')
+    o_divs = soup.find_all('div', class_='wp_quiz_question_options')
+    a_divs = soup.find_all('div', class_='wp_basic_quiz_answer')
+
+    count = min(len(q_divs), len(o_divs), len(a_divs))
+    for i in range(count):
         try:
-            q_el = sq.find('div', class_='ques_text') or sq.find('h3') or sq
-            if not q_el: continue
-            # Extract just the question text, avoiding nested divs if possible
-            q_text_raw = q_el.get_text(separator=' ', strip=True)
-            q_text = re.sub(r'^\d+\.\s*', '', q_text_raw).strip()
+            q_text = re.sub(r'^\d+\.\s*', '', q_divs[i].get_text().strip())
+            ops_text = o_divs[i].get_text(separator='\n')
+            raw_ops = [x.strip() for x in ops_text.split('\n') if x.strip()]
+            clean_ops = [re.sub(r'^\[[A-D]\]\s*', '', op)[:100] for op in raw_ops][:4]
+            if len(clean_ops) < 4: continue
 
-            opts_container = sq.find('div', class_='sques_options') or sq.find('div', class_='wp_quiz_question_options')
-            if not opts_container: continue
-            
-            raw_ops = [o.get_text(strip=True) for o in opts_container.find_all(['div', 'p'], class_=re.compile(r'opt|option'))]
-            if not raw_ops:
-                # Fallback option extraction
-                ops_text = opts_container.get_text(separator='\n')
-                raw_ops = [x.strip() for x in ops_text.split('\n') if x.strip()]
-                
-            clean_ops = [re.sub(r'^\[[A-D]\]\s*', '', op, flags=re.IGNORECASE)[:100] for op in raw_ops][:4]
-            if len(clean_ops) < 2: continue
-
-            ans_el = sq.find('div', class_='sques_answer') or sq.find('div', class_='wp_basic_quiz_answer') or sq.find('div', class_='ques_ans')
+            ans_text = a_divs[i].get_text().lower()
             correct = -1
-            if ans_el:
-                ans_text = ans_el.get_text().lower()
-                if "correct answer: a" in ans_text or "[a]" in ans_text or "उत्तर: a" in ans_text: correct = 0
-                elif "correct answer: b" in ans_text or "[b]" in ans_text or "उत्तर: b" in ans_text: correct = 1
-                elif "correct answer: c" in ans_text or "[c]" in ans_text or "उत्तर: c" in ans_text: correct = 2
-                elif "correct answer: d" in ans_text or "[d]" in ans_text or "उत्तर: d" in ans_text: correct = 3
+            if "correct answer: a" in ans_text or "[a]" in ans_text: correct = 0
+            elif "correct answer: b" in ans_text or "[b]" in ans_text: correct = 1
+            elif "correct answer: c" in ans_text or "[c]" in ans_text: correct = 2
+            elif "correct answer: d" in ans_text or "[d]" in ans_text: correct = 3
 
             if correct != -1:
                 questions.append({'q': q_text[:300], 'options': clean_ops, 'correct': correct})
-        except Exception as e: 
-            continue
-            
-    if questions: return questions
-
-    # METHOD 2: Standard Paragraph Text parsing (Hindi Current affairs format)
-    p_tags = soup.find_all(['p', 'div'])
-    for p in p_tags:
-        text = p.get_text(separator='\n').strip()
-        # Look for pattern: "1. ...." and options "[A]..."
-        if re.match(r'^\d+\.', text) and ('[A]' in text or '[a]' in text) and ('[B]' in text or '[b]' in text):
-            try:
-                lines = [line.strip() for line in text.split('\n') if line.strip()]
-                q_text = re.sub(r'^\d+\.\s*', '', lines[0])[:300]
-                options = []
-                for line in lines[1:]:
-                    line_upper = line.upper()
-                    if line_upper.startswith('[A]') or line_upper.startswith('[B]') or line_upper.startswith('[C]') or line_upper.startswith('[D]'):
-                        options.append(re.sub(r'^\[[A-D]\]\s*', '', line, flags=re.IGNORECASE)[:100])
-                
-                if len(options) >= 2:
-                    ans_text = ""
-                    # Check if answer is in the same block
-                    if "Correct Answer:" in text or "उत्तर:" in text:
-                        ans_text = text.lower()
-                    else:
-                        # Scan next few elements for the answer
-                        next_sib = p.find_next_sibling()
-                        for _ in range(5):
-                            if next_sib:
-                                ans_text += next_sib.get_text().lower()
-                                next_sib = next_sib.find_next_sibling()
-
-                    correct = -1
-                    if "correct answer: a" in ans_text or "उत्तर: a" in ans_text or "answer: a" in ans_text or "[a]" in ans_text: correct = 0
-                    elif "correct answer: b" in ans_text or "उत्तर: b" in ans_text or "answer: b" in ans_text or "[b]" in ans_text: correct = 1
-                    elif "correct answer: c" in ans_text or "उत्तर: c" in ans_text or "answer: c" in ans_text or "[c]" in ans_text: correct = 2
-                    elif "correct answer: d" in ans_text or "उत्तर: d" in ans_text or "answer: d" in ans_text or "[d]" in ans_text: correct = 3
-
-                    if correct != -1:
-                        questions.append({'q': q_text, 'options': options[:4], 'correct': correct})
-            except:
-                pass
-
-    # Ensure unique questions (remove duplicates)
-    unique_questions = []
-    seen_q = set()
-    for q in questions:
-        if q['q'] not in seen_q:
-            seen_q.add(q['q'])
-            unique_questions.append(q)
-
-    return unique_questions
+        except: continue
+    return questions
 
 def scrape_gktoday(source, page):
     pg = page if page > 0 else 1
-    
-    # GKToday pagination handling
-    if source == 'gktoday_hi':
-        url = f"{GKTODAY_HI}?pageno={pg}"
-    else:
-        if pg == 1:
-            url = GKTODAY_EN
-        else:
-            url = f"{GKTODAY_EN}page/{pg}/"
-            
+    url = f"{GKTODAY_HI}?pageno={pg}" if source == 'gktoday_hi' else f"{GKTODAY_EN}?pageno={pg}"
     try:
         res = SESSION.get(url, headers=HEADERS, timeout=15)
         soup = BeautifulSoup(res.text, 'lxml')
         qs = extract_gktoday(soup)
+        if len(qs) >= 5: return url, qs
         
-        # Agar current page par hi questions mil gaye
-        if len(qs) >= 3: return url, qs
-        
-        # Varna ye ek category page ho sakta hai, toh isme se pehla quiz post dhoondho
-        inner_url = None
-        
-        # Method A: Standard post blocks
-        post_containers = soup.find_all(['div', 'article'], class_=['post-data', 'post-content', 'entry-content', 'post', 'item-details'])
-        for container in post_containers:
-            a_tag = container.find('a', href=True)
-            if a_tag and 'gktoday.in' in a_tag['href'] and not 'pageno=' in a_tag['href']:
-                inner_url = a_tag['href']
-                break
-                
-        # Method B: Fallback search for any quiz link
-        if not inner_url:
-            for a in soup.find_all('a', href=True):
-                href = a['href']
-                if ('current-affairs' in href or 'quiz' in href) and href != url and 'pageno=' not in href and '/page/' not in href:
-                    inner_url = href
-                    break
-
-        if inner_url:
-            logger.info(f"GKToday fetching inner post: {inner_url}")
+        link = soup.find('div', class_='post-data')
+        if link and link.find('a'):
+            inner_url = link.find('a')['href']
             res_in = SESSION.get(inner_url, headers=HEADERS, timeout=15)
-            inner_qs = extract_gktoday(BeautifulSoup(res_in.text, 'lxml'))
-            if inner_qs: return inner_url, inner_qs
-            
+            return inner_url, extract_gktoday(BeautifulSoup(res_in.text, 'lxml'))
         return None, []
     except Exception as e:
         logger.error(f"GT Error: {e}")

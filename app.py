@@ -121,20 +121,39 @@ INDIABIX_URLS = {
     "src_ib_net": "https://www.indiabix.com/networking/questions-and-answers/",
 }
 
-# --- NETWORK SESSION (REAL BROWSER BYPASS) ---
-# Render ke IP blocks ko bypass karne ke liye cloudscraper use kiya gaya hai
-SESSION = cloudscraper.create_scraper(
-    browser={
-        'browser': 'chrome',
-        'platform': 'windows',
-        'desktop': True
-    }
-)
+# --- NETWORK SESSION (ADVANCED REAL BROWSER BYPASS) ---
+try:
+    from curl_cffi import requests as cffi_requests
+    SESSION = cffi_requests.Session(impersonate="chrome120")
+    logger.info("✅ Using curl_cffi for Advanced Real Chrome Browser Impersonation")
+except ImportError:
+    import cloudscraper
+    SESSION = cloudscraper.create_scraper(
+        browser={
+            'browser': 'chrome',
+            'platform': 'windows',
+            'desktop': True
+        }
+    )
+    logger.info("✅ Using cloudscraper as fallback")
+
 HEADERS = {
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
     'Accept-Language': 'en-US,en;q=0.9,hi;q=0.8',
     'Referer': 'https://www.google.com/'
 }
+
+# Universal Fetch Function
+def fetch_url(url):
+    try:
+        # Agar curl_cffi use ho raha hai, toh Chrome ke perfect headers automatically lag jayenge
+        if hasattr(SESSION, 'impersonate'):
+            return SESSION.get(url, timeout=20)
+        else:
+            return SESSION.get(url, headers=HEADERS, timeout=20)
+    except Exception as e:
+        logger.error(f"Fetch Error URL {url}: {e}")
+        return None
 
 # --- DUMMY WEB SERVER FOR RENDER ---
 class DummyHandler(BaseHTTPRequestHandler):
@@ -255,16 +274,18 @@ def scrape_gktoday(source, page):
     pg = page if page > 0 else 1
     url = f"{GKTODAY_HI}?pageno={pg}" if source == 'gktoday_hi' else f"{GKTODAY_EN}?pageno={pg}"
     try:
-        res = SESSION.get(url, headers=HEADERS, timeout=15)
-        soup = BeautifulSoup(res.text, 'lxml')
+        res = fetch_url(url)
+        if not res: return None, []
+        soup = BeautifulSoup(res.content, 'lxml')
         qs = extract_gktoday(soup)
         if len(qs) >= 5: return url, qs
         
         link = soup.find('div', class_='post-data')
         if link and link.find('a'):
             inner_url = link.find('a')['href']
-            res_in = SESSION.get(inner_url, headers=HEADERS, timeout=15)
-            return inner_url, extract_gktoday(BeautifulSoup(res_in.text, 'lxml'))
+            res_in = fetch_url(inner_url)
+            if res_in:
+                return inner_url, extract_gktoday(BeautifulSoup(res_in.content, 'lxml'))
         return None, []
     except Exception as e:
         logger.error(f"GT Error: {e}")
@@ -315,8 +336,9 @@ def scrape_examveda(base_url, page):
     sep = "&" if "?" in base_url else "?"
     url = f"{base_url}{sep}page={pg}"
     try:
-        res = SESSION.get(url, headers=HEADERS, timeout=15)
-        soup = BeautifulSoup(res.text, 'lxml')
+        res = fetch_url(url)
+        if not res: return url, []
+        soup = BeautifulSoup(res.content, 'lxml')
         qs = extract_examveda(soup)
         return url, qs
     except Exception as e:
@@ -371,22 +393,24 @@ def scrape_indiabix(base_url, page):
     url = base_url
     if page > 1:
         try:
-            res1 = SESSION.get(base_url, headers=HEADERS, timeout=15)
-            soup1 = BeautifulSoup(res1.text, 'lxml')
-            page_link = soup1.find('a', string=str(page))
-            if page_link and 'href' in page_link.attrs:
-                url = page_link['href']
-                if not url.startswith('http'):
-                    url = "https://www.indiabix.com" + url
-            else:
-                return base_url, []
+            res1 = fetch_url(base_url)
+            if res1:
+                soup1 = BeautifulSoup(res1.content, 'lxml')
+                page_link = soup1.find('a', string=str(page))
+                if page_link and 'href' in page_link.attrs:
+                    url = page_link['href']
+                    if not url.startswith('http'):
+                        url = "https://www.indiabix.com" + url
+                else:
+                    return base_url, []
         except Exception as e:
             logger.error(f"IndiaBix Pagination Error: {e}")
             return base_url, []
 
     try:
-        res = SESSION.get(url, headers=HEADERS, timeout=15)
-        soup = BeautifulSoup(res.text, 'lxml')
+        res = fetch_url(url)
+        if not res: return url, []
+        soup = BeautifulSoup(res.content, 'lxml')
         qs = extract_indiabix(soup)
         return url, qs
     except Exception as e:
@@ -666,8 +690,9 @@ async def button_tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=chat_id, text=f"✅ <b>{topic_name}</b> लोड हो रहा है...\n<i>कृपया प्रतीक्षा करें ⏳</i>", parse_mode="HTML")
         
         try:
-            res = SESSION.get(base_url, headers=HEADERS, timeout=15)
-            soup = BeautifulSoup(res.text, 'lxml')
+            res = fetch_url(base_url)
+            if not res: raise Exception("Fetch failed")
+            soup = BeautifulSoup(res.content, 'lxml')
             
             has_chapters = False
             keyboard = []
@@ -744,8 +769,9 @@ async def button_tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=chat_id, text=f"✅ <b>{topic_name}</b> लोड हो रहा है...\n<i>कृपया प्रतीक्षा करें ⏳</i>", parse_mode="HTML")
         
         try:
-            res = SESSION.get(base_url, headers=HEADERS, timeout=15)
-            soup = BeautifulSoup(res.text, 'lxml')
+            res = fetch_url(base_url)
+            if not res: raise Exception("Fetch failed")
+            soup = BeautifulSoup(res.content, 'lxml')
             
             articles = soup.find_all('article')
             has_chapters = False

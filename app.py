@@ -4,6 +4,7 @@ import sqlite3
 import asyncio
 import os
 import requests
+import cloudscraper
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -19,7 +20,6 @@ from telegram.ext import (
 from telegram.request import HTTPXRequest
 
 # --- LOGGING SETUP ---
-# Taki Render logs me error dikh sake
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -33,14 +33,12 @@ DB_NAME = "quiz_group_data.db"
 # 👇 Yahan Apne Links Daalein 👇
 WEBSITE_LINK = "https://todayvacancy.in" 
 TG_GROUP_LINK = "https://t.me/current_affairs_live_quiz"
-# HTML Parse Mode ke hisaab se Promo Text update kiya gaya hai
 PROMO_TEXT = f"🌐 <b>check todayvacancy:</b> <a href='{WEBSITE_LINK}'>Click Here</a>\n📢 <b>Join Telegram:</b> <a href='{TG_GROUP_LINK}'>Click Here</a>"
 
 # URLs
 GKTODAY_HI = "https://www.gktoday.in/quizbase/hindi-current-affairs"
 GKTODAY_EN = "https://www.gktoday.in/gk-current-affairs-quiz-questions-answers/"
 
-# 👇 ExamVeda URL Mapping 👇
 EXAMVEDA_URLS = {
     "src_ev_aptitude": "https://www.examveda.com/mcq-question-on-arithmetic-ability/",
     "src_ev_reasoning": "https://www.examveda.com/mcq-question-on-competitive-reasoning/",
@@ -95,33 +93,26 @@ EXAMVEDA_URLS = {
     "src_ev_bank_int": "https://www.examveda.com/interview/banking-interview-questions-and-answers/",
 }
 
-# 👇 IndiaBix URL Mapping 👇
 INDIABIX_URLS = {
-    # Aptitude
     "src_ib_arithmetic": "https://www.indiabix.com/aptitude/questions-and-answers/",
     "src_ib_di": "https://www.indiabix.com/data-interpretation/questions-and-answers/",
-    # Reasoning
     "src_ib_verbal_ab": "https://www.indiabix.com/verbal-ability/questions-and-answers/",
     "src_ib_logical": "https://www.indiabix.com/logical-reasoning/questions-and-answers/",
     "src_ib_verbal_re": "https://www.indiabix.com/verbal-reasoning/questions-and-answers/",
     "src_ib_non_verbal": "https://www.indiabix.com/non-verbal-reasoning/questions-and-answers/",
-    # GK
     "src_ib_ca": "https://www.indiabix.com/current-affairs/questions-and-answers/",
     "src_ib_gk": "https://www.indiabix.com/general-knowledge/questions-and-answers/",
     "src_ib_science": "https://www.indiabix.com/general-knowledge/general-science/",
-    # Interview
     "src_ib_hr": "https://www.indiabix.com/hr-interview/questions-and-answers/",
     "src_ib_gd": "https://www.indiabix.com/group-discussion/topics-with-answers/",
     "src_ib_place": "https://www.indiabix.com/placement-papers/companies/",
     "src_ib_tech_int": "https://www.indiabix.com/technical/interview-questions-and-answers/",
-    # Engineering
     "src_ib_mech": "https://www.indiabix.com/mechanical-engineering/questions-and-answers/",
     "src_ib_civil": "https://www.indiabix.com/civil-engineering/questions-and-answers/",
     "src_ib_ece": "https://www.indiabix.com/electronics-and-communication-engineering/questions-and-answers/",
     "src_ib_eee": "https://www.indiabix.com/electrical-engineering/questions-and-answers/",
     "src_ib_cse": "https://www.indiabix.com/computer-science/questions-and-answers/",
     "src_ib_chem": "https://www.indiabix.com/chemical-engineering/questions-and-answers/",
-    # Programming
     "src_ib_c": "https://www.indiabix.com/c-programming/questions-and-answers/",
     "src_ib_cpp": "https://www.indiabix.com/cpp-programming/questions-and-answers/",
     "src_ib_csharp": "https://www.indiabix.com/c-sharp-programming/questions-and-answers/",
@@ -130,14 +121,18 @@ INDIABIX_URLS = {
     "src_ib_net": "https://www.indiabix.com/networking/questions-and-answers/",
 }
 
-# --- NETWORK SESSION ---
-SESSION = requests.Session()
-adapter = requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=20)
-SESSION.mount('http://', adapter)
-SESSION.mount('https://', adapter)
+# --- NETWORK SESSION (REAL BROWSER BYPASS) ---
+# Render ke IP blocks ko bypass karne ke liye cloudscraper use kiya gaya hai
+SESSION = cloudscraper.create_scraper(
+    browser={
+        'browser': 'chrome',
+        'platform': 'windows',
+        'desktop': True
+    }
+)
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9,hi;q=0.8',
     'Referer': 'https://www.google.com/'
 }
 
@@ -260,16 +255,16 @@ def scrape_gktoday(source, page):
     pg = page if page > 0 else 1
     url = f"{GKTODAY_HI}?pageno={pg}" if source == 'gktoday_hi' else f"{GKTODAY_EN}?pageno={pg}"
     try:
-        res = SESSION.get(url, headers=HEADERS, timeout=10)
-        soup = BeautifulSoup(res.content, 'lxml')
+        res = SESSION.get(url, headers=HEADERS, timeout=15)
+        soup = BeautifulSoup(res.text, 'lxml')
         qs = extract_gktoday(soup)
         if len(qs) >= 5: return url, qs
         
         link = soup.find('div', class_='post-data')
         if link and link.find('a'):
             inner_url = link.find('a')['href']
-            res_in = SESSION.get(inner_url, headers=HEADERS, timeout=10)
-            return inner_url, extract_gktoday(BeautifulSoup(res_in.content, 'lxml'))
+            res_in = SESSION.get(inner_url, headers=HEADERS, timeout=15)
+            return inner_url, extract_gktoday(BeautifulSoup(res_in.text, 'lxml'))
         return None, []
     except Exception as e:
         logger.error(f"GT Error: {e}")
@@ -320,8 +315,8 @@ def scrape_examveda(base_url, page):
     sep = "&" if "?" in base_url else "?"
     url = f"{base_url}{sep}page={pg}"
     try:
-        res = SESSION.get(url, headers=HEADERS, timeout=10)
-        soup = BeautifulSoup(res.content, 'lxml')
+        res = SESSION.get(url, headers=HEADERS, timeout=15)
+        soup = BeautifulSoup(res.text, 'lxml')
         qs = extract_examveda(soup)
         return url, qs
     except Exception as e:
@@ -376,8 +371,8 @@ def scrape_indiabix(base_url, page):
     url = base_url
     if page > 1:
         try:
-            res1 = SESSION.get(base_url, headers=HEADERS, timeout=10)
-            soup1 = BeautifulSoup(res1.content, 'lxml')
+            res1 = SESSION.get(base_url, headers=HEADERS, timeout=15)
+            soup1 = BeautifulSoup(res1.text, 'lxml')
             page_link = soup1.find('a', string=str(page))
             if page_link and 'href' in page_link.attrs:
                 url = page_link['href']
@@ -390,8 +385,8 @@ def scrape_indiabix(base_url, page):
             return base_url, []
 
     try:
-        res = SESSION.get(url, headers=HEADERS, timeout=10)
-        soup = BeautifulSoup(res.content, 'lxml')
+        res = SESSION.get(url, headers=HEADERS, timeout=15)
+        soup = BeautifulSoup(res.text, 'lxml')
         qs = extract_indiabix(soup)
         return url, qs
     except Exception as e:
@@ -574,6 +569,7 @@ async def fetch_and_start(update, context, source, page, chat_id):
     job_name = f"quiz_{chat_id}"
     for job in context.job_queue.get_jobs_by_name(job_name): job.schedule_removal()
     
+    # ❌ Yahan se Promo Text hata diya gaya hai jaisa aapne screen me mark kiya tha ❌
     start_msg = (
         f"🚀 <b>Quiz Started!</b>\n"
         f"📚 Source: {src_name}\n"
@@ -602,6 +598,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_admin(update, context): return
+    # ❌ Yahan se bhi Promo Text hata diya gaya hai jaisa aapne screen me mark kiya tha ❌
     await update.message.reply_text(
         "📣 <b>Choose Quiz Category:</b>", 
         reply_markup=get_main_menu(), 
@@ -669,8 +666,8 @@ async def button_tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=chat_id, text=f"✅ <b>{topic_name}</b> लोड हो रहा है...\n<i>कृपया प्रतीक्षा करें ⏳</i>", parse_mode="HTML")
         
         try:
-            res = SESSION.get(base_url, headers=HEADERS, timeout=10)
-            soup = BeautifulSoup(res.content, 'lxml')
+            res = SESSION.get(base_url, headers=HEADERS, timeout=15)
+            soup = BeautifulSoup(res.text, 'lxml')
             
             has_chapters = False
             keyboard = []
@@ -747,8 +744,8 @@ async def button_tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=chat_id, text=f"✅ <b>{topic_name}</b> लोड हो रहा है...\n<i>कृपया प्रतीक्षा करें ⏳</i>", parse_mode="HTML")
         
         try:
-            res = SESSION.get(base_url, headers=HEADERS, timeout=10)
-            soup = BeautifulSoup(res.content, 'lxml')
+            res = SESSION.get(base_url, headers=HEADERS, timeout=15)
+            soup = BeautifulSoup(res.text, 'lxml')
             
             articles = soup.find_all('article')
             has_chapters = False
@@ -806,7 +803,7 @@ async def button_tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
             page = 1
             update_state(chat_id, 0, c_url, page)  
             
-            await context.bot.send_message(chat_id=chat_id, text=f"✅ <b>आपने चुना:</b> <code>{c_name_safe}</code>\n🔄 प्रश्न लाये जा रहे हैं...", parse_mode="HTML")
+            await context.bot.send_message(chat_id=chat_id, text=f"✅ <b>आपने चुना:</b> <code>{c_name_safe}</code>\n🔄 प्रश्न lाये जा रहे हैं...", parse_mode="HTML")
             await fetch_and_start(update, context, c_url, page, chat_id)
         else:
             await context.bot.send_message(chat_id=chat_id, text="❌ Session Expired. Please select category again.", parse_mode="HTML")
@@ -844,8 +841,11 @@ async def send_quiz(context: ContextTypes.DEFAULT_TYPE):
 
     try:
         correct_ans_text = q['options'][q['correct']].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        
+        # ✅ YAHAN BULB MEIN PROMO TEXT AAYEGA ✅
         promo_explanation = f"Correct Answer: {correct_ans_text}\n\n{PROMO_TEXT}"
         
+        # ✅ POLL KE NEECHE WALE BUTTON BHI REMOVED HAIN ✅
         msg = await context.bot.send_poll(
             chat_id=chat_id, 
             question=f"Q{curr_idx+1}: {q['q']}", 
@@ -914,7 +914,7 @@ def main():
     threading.Thread(target=run_dummy_server, daemon=True).start()
 
     init_db()
-    logger.info("Bot Live! With Dummy Web Server for Render.")
+    logger.info("Bot Live! With Dummy Web Server for Render and CloudScraper.")
     req = HTTPXRequest(connection_pool_size=20, connect_timeout=30, read_timeout=30)
     app = Application.builder().token(TOKEN).request(req).post_init(setup_commands).build()
     

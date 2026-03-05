@@ -35,10 +35,7 @@ WEBSITE_LINK = "https://todayvacancy.in"
 TG_GROUP_LINK = "https://t.me/current_affairs_live_quiz"
 PROMO_TEXT = f"🌐 <b>check todayvacancy:</b> <a href='{WEBSITE_LINK}'>Click Here</a>\n📢 <b>Join Telegram:</b> <a href='{TG_GROUP_LINK}'>Click Here</a>"
 
-# URLs
-GKTODAY_HI = "https://www.gktoday.in/quizbase/hindi-current-affairs"
-GKTODAY_EN = "https://www.gktoday.in/gk-current-affairs-quiz-questions-answers/"
-
+# 👇 ExamVeda URL Mapping 👇
 EXAMVEDA_URLS = {
     "src_ev_aptitude": "https://www.examveda.com/mcq-question-on-arithmetic-ability/",
     "src_ev_reasoning": "https://www.examveda.com/mcq-question-on-competitive-reasoning/",
@@ -93,6 +90,7 @@ EXAMVEDA_URLS = {
     "src_ev_bank_int": "https://www.examveda.com/interview/banking-interview-questions-and-answers/",
 }
 
+# 👇 IndiaBix URL Mapping 👇
 INDIABIX_URLS = {
     "src_ib_arithmetic": "https://www.indiabix.com/aptitude/questions-and-answers/",
     "src_ib_di": "https://www.indiabix.com/data-interpretation/questions-and-answers/",
@@ -188,7 +186,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS quiz_state (
             chat_id INTEGER PRIMARY KEY,
             current_index INTEGER DEFAULT 0,
-            selected_source TEXT DEFAULT 'gktoday_hi', 
+            selected_source TEXT DEFAULT 'src_ev_gk', 
             current_page INTEGER DEFAULT 0
         )
     """)
@@ -202,7 +200,7 @@ def get_state(chat_id):
     row = cursor.fetchone()
     conn.close()
     if row: return row
-    return (0, "gktoday_hi", 1)
+    return (0, "src_ev_gk", 1)
 
 def update_state(chat_id, index, source, page):
     conn = sqlite3.connect(DB_NAME)
@@ -241,58 +239,7 @@ async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
         return False
 
 # ==========================================
-# 1. GKTODAY SCRAPER (REVERTED TO YOUR LOCAL WORKING CODE)
-# ==========================================
-def extract_gktoday(soup):
-    questions = []
-    q_divs = soup.find_all('div', class_='wp_quiz_question')
-    o_divs = soup.find_all('div', class_='wp_quiz_question_options')
-    a_divs = soup.find_all('div', class_='wp_basic_quiz_answer')
-
-    count = min(len(q_divs), len(o_divs), len(a_divs))
-    for i in range(count):
-        try:
-            q_text = re.sub(r'^\d+\.\s*', '', q_divs[i].get_text().strip())
-            ops_text = o_divs[i].get_text(separator='\n')
-            raw_ops = [x.strip() for x in ops_text.split('\n') if x.strip()]
-            clean_ops = [re.sub(r'^\[[A-D]\]\s*', '', op)[:100] for op in raw_ops][:4]
-            if len(clean_ops) < 4: continue
-
-            ans_text = a_divs[i].get_text().lower()
-            correct = -1
-            if "correct answer: a" in ans_text or "[a]" in ans_text: correct = 0
-            elif "correct answer: b" in ans_text or "[b]" in ans_text: correct = 1
-            elif "correct answer: c" in ans_text or "[c]" in ans_text: correct = 2
-            elif "correct answer: d" in ans_text or "[d]" in ans_text: correct = 3
-
-            if correct != -1:
-                questions.append({'q': q_text[:300], 'options': clean_ops, 'correct': correct})
-        except: continue
-    return questions
-
-def scrape_gktoday(source, page):
-    pg = page if page > 0 else 1
-    url = f"{GKTODAY_HI}?pageno={pg}" if source == 'gktoday_hi' else f"{GKTODAY_EN}?pageno={pg}"
-    try:
-        res = fetch_url(url)
-        if not res: return None, []
-        soup = BeautifulSoup(res.content, 'lxml')
-        qs = extract_gktoday(soup)
-        if len(qs) >= 5: return url, qs
-        
-        link = soup.find('div', class_='post-data')
-        if link and link.find('a'):
-            inner_url = link.find('a')['href']
-            res_in = fetch_url(inner_url)
-            if res_in:
-                return inner_url, extract_gktoday(BeautifulSoup(res_in.content, 'lxml'))
-        return None, []
-    except Exception as e:
-        logger.error(f"GT Error: {e}")
-        return None, []
-
-# ==========================================
-# 2. EXAMVEDA SCRAPER
+# 1. EXAMVEDA SCRAPER
 # ==========================================
 def extract_examveda(soup):
     questions = []
@@ -346,7 +293,7 @@ def scrape_examveda(base_url, page):
         return url, []
 
 # ==========================================
-# 3. INDIABIX SCRAPER
+# 2. INDIABIX SCRAPER
 # ==========================================
 def extract_indiabix(soup):
     questions = []
@@ -421,17 +368,10 @@ def scrape_indiabix(base_url, page):
 # KEYBOARD MENUS (UI BUILDING)
 # ==========================================
 def get_main_menu():
+    # Yahan se GKToday ka button hata diya gaya hai
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📚 GKToday (Current Affairs)", callback_data="menu_gktoday")],
         [InlineKeyboardButton("🧠 ExamVeda (Maths, Reasoning, etc.)", callback_data="menu_examveda")],
         [InlineKeyboardButton("🎓 IndiaBix (Aptitude, Programming)", callback_data="menu_indiabix")]
-    ])
-
-def get_gktoday_menu():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🇮🇳 Hindi Current Affairs", callback_data="src_gktoday_hi")],
-        [InlineKeyboardButton("🇬🇧 English Current Affairs", callback_data="src_gktoday_en")],
-        [InlineKeyboardButton("🔙 Back to Main", callback_data="menu_main")]
     ])
 
 def get_examveda_main_menu():
@@ -574,10 +514,7 @@ async def fetch_and_start(update, context, source, page, chat_id):
     global CACHED_DATA
     pg = page if page > 0 else 1
     
-    if "gktoday" in source:
-        url, qs = scrape_gktoday(source, pg)
-        src_name = "GKToday"
-    elif "indiabix" in source:
+    if "indiabix" in source:
         url, qs = scrape_indiabix(source, pg)
         src_name = f"IndiaBix - Set {pg}"
     else:
@@ -585,7 +522,8 @@ async def fetch_and_start(update, context, source, page, chat_id):
         src_name = f"ExamVeda - Set {pg}"
 
     if not qs:
-        await context.bot.send_message(chat_id, f"❌ Error: Data nahi mila या इस पेज पर और सवाल नहीं हैं।\nLink: {url}")
+        # ✅ Yahan se link ko puri tarah hata diya gaya hai taaki preview na dikhe ✅
+        await context.bot.send_message(chat_id, "❌ Error: Data nahi mila ya is page par aur sawal nahi hain.")
         return
 
     CACHED_DATA[chat_id] = qs
@@ -593,7 +531,6 @@ async def fetch_and_start(update, context, source, page, chat_id):
     job_name = f"quiz_{chat_id}"
     for job in context.job_queue.get_jobs_by_name(job_name): job.schedule_removal()
     
-    # ❌ Yahan se Promo Text hata diya gaya hai jaisa aapne screen me mark kiya tha ❌
     start_msg = (
         f"🚀 <b>Quiz Started!</b>\n"
         f"📚 Source: {src_name}\n"
@@ -622,7 +559,6 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_admin(update, context): return
-    # ❌ Yahan se bhi Promo Text hata diya gaya hai jaisa aapne screen me mark kiya tha ❌
     await update.message.reply_text(
         "📣 <b>Choose Quiz Category:</b>", 
         reply_markup=get_main_menu(), 
@@ -638,8 +574,6 @@ async def button_tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if data == "menu_main":
         await context.bot.send_message(chat_id=chat_id, text="📣 <b>Choose Quiz Category:</b>", reply_markup=get_main_menu(), parse_mode="HTML")
-    elif data == "menu_gktoday":
-        await context.bot.send_message(chat_id=chat_id, text="🌐 <b>Select GKToday Language:</b>", reply_markup=get_gktoday_menu(), parse_mode="HTML")
     elif data == "menu_examveda":
         await context.bot.send_message(chat_id=chat_id, text="🧠 <b>ExamVeda Main Categories:</b>\n<i>Choose an option below:</i>", reply_markup=get_examveda_main_menu(), parse_mode="HTML")
     elif data == "menu_indiabix":
@@ -671,20 +605,13 @@ async def button_tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=chat_id, text="🤝 <b>Interview Questions (Option 6):</b>", reply_markup=get_ev_cat6_menu(), parse_mode="HTML")
     elif data == "ev_cat_7":
         await context.bot.send_message(chat_id=chat_id, text="🏦 <b>Banking Awareness (Option 7):</b>", reply_markup=get_ev_cat7_menu(), parse_mode="HTML")
-
-    elif data.startswith("src_gktoday_"):
-        source = data.replace("src_", "") 
-        page = 1 
-        update_state(chat_id, 0, source, page)
-        await context.bot.send_message(chat_id=chat_id, text=f"✅ Selected: {source.replace('gktoday_', '').upper()}\n🔄 Loading Questions...", parse_mode="HTML")
-        await fetch_and_start(update, context, source, page, chat_id)
         
     elif data.startswith("src_ib_"):
         topic_name = data.replace("src_ib_", "").replace("_", " ").upper()
         base_url = INDIABIX_URLS.get(data)
         
         if not base_url:
-            await context.bot.send_message(chat_id=chat_id, text="❌ Error: URL not found for this category.", parse_mode="HTML")
+            await context.bot.send_message(chat_id=chat_id, text="❌ Error: Category not found.", parse_mode="HTML")
             return
 
         await context.bot.send_message(chat_id=chat_id, text=f"✅ <b>{topic_name}</b> लोड हो रहा है...\n<i>कृपया प्रतीक्षा करें ⏳</i>", parse_mode="HTML")
@@ -763,7 +690,7 @@ async def button_tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
         topic_name = data.replace("src_ev_", "").replace("_", " ").upper()
         base_url = EXAMVEDA_URLS.get(data)
         if not base_url:
-            await context.bot.send_message(chat_id=chat_id, text="❌ Error: URL not found for this category.", parse_mode="HTML")
+            await context.bot.send_message(chat_id=chat_id, text="❌ Error: Category not found.", parse_mode="HTML")
             return
 
         await context.bot.send_message(chat_id=chat_id, text=f"✅ <b>{topic_name}</b> लोड हो रहा है...\n<i>कृपया प्रतीक्षा करें ⏳</i>", parse_mode="HTML")
@@ -829,7 +756,7 @@ async def button_tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
             page = 1
             update_state(chat_id, 0, c_url, page)  
             
-            await context.bot.send_message(chat_id=chat_id, text=f"✅ <b>आपने चुना:</b> <code>{c_name_safe}</code>\n🔄 प्रश्न lाये जा रहे हैं...", parse_mode="HTML")
+            await context.bot.send_message(chat_id=chat_id, text=f"✅ <b>आपने चुना:</b> <code>{c_name_safe}</code>\n🔄 प्रश्न लाये जा रहे हैं...", parse_mode="HTML")
             await fetch_and_start(update, context, c_url, page, chat_id)
         else:
             await context.bot.send_message(chat_id=chat_id, text="❌ Session Expired. Please select category again.", parse_mode="HTML")
@@ -871,7 +798,6 @@ async def send_quiz(context: ContextTypes.DEFAULT_TYPE):
         # ✅ YAHAN BULB MEIN PROMO TEXT AAYEGA ✅
         promo_explanation = f"Correct Answer: {correct_ans_text}\n\n{PROMO_TEXT}"
         
-        # ✅ POLL KE NEECHE WALE BUTTON BHI REMOVED HAIN ✅
         msg = await context.bot.send_poll(
             chat_id=chat_id, 
             question=f"Q{curr_idx+1}: {q['q']}", 

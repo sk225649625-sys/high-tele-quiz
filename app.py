@@ -4,7 +4,6 @@ import sqlite3
 import asyncio
 import os
 import requests
-import cloudscraper
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -144,7 +143,6 @@ HEADERS = {
 # Universal Fetch Function
 def fetch_url(url):
     try:
-        # Agar curl_cffi use ho raha hai, toh Chrome ke perfect headers automatically lag jayenge
         if hasattr(SESSION, 'impersonate'):
             return SESSION.get(url, timeout=20)
         else:
@@ -365,13 +363,89 @@ def scrape_indiabix(base_url, page):
         return url, []
 
 # ==========================================
+# 3. CHRONICLE INDIA SCRAPER (NEW)
+# ==========================================
+def extract_chronicle(soup):
+    questions = []
+    
+    # Chronicle quiz questions hamesha class="qnans" wale div me aate hain
+    qnans_div = soup.find('div', class_='qnans')
+    if not qnans_div:
+        return questions
+
+    current_q = None
+    current_options = []
+    correct_val = 0
+    
+    # Sequential parsing: paragraphs(Q), table(Options), div(Answer)
+    for elem in qnans_div.find_all(['p', 'table', 'div']):
+        # 1. QUESTION EXTRACT KAREN
+        if elem.name == 'p' and elem.get('style') and 'inline' in elem.get('style'):
+            # Agar pichla question complete ho gaya tha, toh usko list me daalo
+            if current_q and len(current_options) >= 2:
+                questions.append({
+                    'q': current_q[:300], 
+                    'options': current_options[:5], 
+                    'correct': correct_val
+                })
+            
+            q_text = elem.get_text(strip=True)
+            # "[1]. " ya "1. " format ko hata kar saaf sawal nikalna
+            current_q = re.sub(r'^\[?\d+\]?\.\s*', '', q_text)
+            current_options = []
+            correct_val = 0
+            
+        # 2. OPTIONS EXTRACT KAREN
+        elif elem.name == 'table' and current_q is not None and not current_options:
+            tds = elem.find_all('td')
+            for td in tds:
+                opt_text = td.get_text(strip=True)
+                # "[A]. " ya "[B]. " format ko hata kar sirf option text rakhna
+                opt_text = re.sub(r'^\[[A-Ea-e]\]\.\s*', '', opt_text)
+                if opt_text:
+                    current_options.append(opt_text[:100])
+                    
+        # 3. CORRECT ANSWER EXTRACT KAREN
+        elif elem.name == 'div' and 'current_quiz_answer' in elem.get('class', []):
+            ans_inner = elem.find('div', class_='ques_answer')
+            if ans_inner:
+                ans_text = ans_inner.get_text(strip=True)
+                # "Correct Answer: B [चिली]" me se "B" nikalna
+                match = re.search(r'Correct Answer:\s*([A-Ea-e])', ans_text, re.IGNORECASE)
+                if match:
+                    ans_letter = match.group(1).upper()
+                    ans_map = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4}
+                    correct_val = ans_map.get(ans_letter, 0)
+
+    # Aakhiri sawal ko loop ke bahar list me jodna
+    if current_q and len(current_options) >= 2:
+        questions.append({
+            'q': current_q[:300], 
+            'options': current_options[:5], 
+            'correct': correct_val
+        })
+        
+    return questions
+
+def scrape_chronicle(url, page):
+    try:
+        res = fetch_url(url)
+        if not res: return url, []
+        soup = BeautifulSoup(res.content, 'lxml')
+        qs = extract_chronicle(soup)
+        return url, qs
+    except Exception as e:
+        logger.error(f"Chronicle Scrape Error: {e}")
+        return url, []
+
+# ==========================================
 # KEYBOARD MENUS (UI BUILDING)
 # ==========================================
 def get_main_menu():
-    # Yahan se GKToday ka button hata diya gaya hai
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🧠 ExamVeda (Maths, Reasoning, etc.)", callback_data="menu_examveda")],
-        [InlineKeyboardButton("🎓 IndiaBix (Aptitude, Programming)", callback_data="menu_indiabix")]
+        [InlineKeyboardButton("🎓 IndiaBix (Aptitude, Programming)", callback_data="menu_indiabix")],
+        [InlineKeyboardButton("📰 Chronicle (Hindi Current Affairs)", callback_data="menu_chronicle")]
     ])
 
 def get_examveda_main_menu():
@@ -509,6 +583,7 @@ def get_ev_cat7_menu():
 CACHED_DATA = {} 
 EXAMVEDA_TEMP_CHAPTERS = {} 
 INDIABIX_TEMP_CHAPTERS = {} 
+CHRONICLE_TEMP_CHAPTERS = {} # Chronicle caching variable
 
 async def fetch_and_start(update, context, source, page, chat_id):
     global CACHED_DATA
@@ -517,12 +592,14 @@ async def fetch_and_start(update, context, source, page, chat_id):
     if "indiabix" in source:
         url, qs = scrape_indiabix(source, pg)
         src_name = f"IndiaBix - Set {pg}"
+    elif "chronicleindia" in source: # Chronicle condition
+        url, qs = scrape_chronicle(source, pg)
+        src_name = f"Chronicle Hindi CA"
     else:
         url, qs = scrape_examveda(source, pg)
         src_name = f"ExamVeda - Set {pg}"
 
     if not qs:
-        # ✅ Yahan se link ko puri tarah hata diya gaya hai taaki preview na dikhe ✅
         await context.bot.send_message(chat_id, "❌ Error: Data nahi mila ya is page par aur sawal nahi hain.")
         return
 
@@ -542,7 +619,6 @@ async def fetch_and_start(update, context, source, page, chat_id):
     await context.bot.send_message(chat_id, start_msg, parse_mode="HTML", disable_web_page_preview=True)
     
     try:
-        # Schedule the quiz loop
         context.job_queue.run_repeating(send_quiz, interval=25, first=5, chat_id=chat_id, name=job_name)
     except Exception as e:
         logger.error(f"Job Queue Error: {e}. PLEASE CHECK requirements.txt for job-queue package.")
@@ -578,6 +654,62 @@ async def button_tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=chat_id, text="🧠 <b>ExamVeda Main Categories:</b>\n<i>Choose an option below:</i>", reply_markup=get_examveda_main_menu(), parse_mode="HTML")
     elif data == "menu_indiabix":
         await context.bot.send_message(chat_id=chat_id, text="🎓 <b>IndiaBix Categories:</b>\n<i>Choose an option below:</i>", reply_markup=get_indiabix_main_menu(), parse_mode="HTML")
+        
+    # --- CHRONICLE INDIA MENU HANDLER ---
+    elif data == "menu_chronicle":
+        await context.bot.send_message(chat_id=chat_id, text="📰 <b>Chronicle Current Affairs</b> लोड हो रहा है...\n<i>कृपया प्रतीक्षा करें ⏳</i>", parse_mode="HTML")
+        try:
+            res = fetch_url("https://www.chronicleindia.in/hindi/current-affairs-quiz-questions-answers")
+            if not res: raise Exception("Fetch failed")
+            soup = BeautifulSoup(res.content, 'lxml')
+            
+            quiz_links = []
+            # Extract links based exactly on provided source code layout <div id="w0" class="list-view">
+            list_view = soup.find('div', id='w0', class_='list-view')
+            if list_view:
+                for a_tag in list_view.find_all('a'):
+                    title = a_tag.get_text(strip=True)
+                    href = a_tag.get('href')
+                    if href:
+                        if not href.startswith("http"):
+                            href = "https://www.chronicleindia.in" + href
+                        quiz_links.append({"name": title, "url": href})
+            
+            if quiz_links:
+                keyboard = []
+                CHRONICLE_TEMP_CHAPTERS[chat_id] = []
+                # Top 10 latest daily quizzes dikhayein
+                for idx, link in enumerate(quiz_links[:10]): 
+                    btn_name = link["name"][:35] + ".." if len(link["name"]) > 35 else link["name"]
+                    CHRONICLE_TEMP_CHAPTERS[chat_id].append(link)
+                    keyboard.append([InlineKeyboardButton(btn_name, callback_data=f"chr_chap_{idx}")])
+                
+                keyboard.append([InlineKeyboardButton("🔙 Back to Main", callback_data="menu_main")])
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="📰 <b>Chronicle Daily Quizzes:</b>\n👇 नीचे दिए गए किसी भी दिन का क्विज़ चुनें:", 
+                    reply_markup=InlineKeyboardMarkup(keyboard), 
+                    parse_mode="HTML"
+                )
+            else:
+                await context.bot.send_message(chat_id, "❌ कोई नया क्विज़ लिंक नहीं मिला।")
+        except Exception as e:
+            logger.error(f"Chronicle Fetch Error: {e}")
+            await context.bot.send_message(chat_id, "❌ लोड करने में समस्या आई।", parse_mode="HTML")
+
+    elif data.startswith("chr_chap_"):
+        idx = int(data.replace("chr_chap_", ""))
+        chapters = CHRONICLE_TEMP_CHAPTERS.get(chat_id, [])
+        if idx < len(chapters):
+            c_name = chapters[idx]['name'].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            c_url = chapters[idx]['url']
+            page = 1
+            update_state(chat_id, 0, c_url, page)  
+            await context.bot.send_message(chat_id=chat_id, text=f"✅ <b>आपने चुना:</b> <code>{c_name}</code>\n🔄 प्रश्न लाये जा रहे हैं...", parse_mode="HTML")
+            await fetch_and_start(update, context, c_url, page, chat_id)
+        else:
+            await context.bot.send_message(chat_id=chat_id, text="❌ Session Expired. Please select category again.", parse_mode="HTML")
+
     elif data == "ib_cat_aptitude":
         await context.bot.send_message(chat_id=chat_id, text="📐 <b>General Aptitude:</b>", reply_markup=get_ib_aptitude_menu(), parse_mode="HTML")
     elif data == "ib_cat_reasoning":
@@ -862,7 +994,6 @@ async def setup_commands(application: Application):
     ])
 
 def main():
-    # Start the dummy web server in a background thread
     threading.Thread(target=run_dummy_server, daemon=True).start()
 
     init_db()
